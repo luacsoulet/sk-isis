@@ -1,159 +1,159 @@
 import streamlit as st
 import pandas as pd
 import io
-import numpy as np
 import os
+import pickle
 from difflib import SequenceMatcher
 
-st.set_page_config(page_title="Isis Data Cleaning Pro", layout="wide")
+st.set_page_config(page_title="Isis Cleaning - Persistence", layout="wide")
 
-# Fonction de similarité
 def get_similarity(a, b):
     return SequenceMatcher(None, str(a), str(b)).ratio()
 
-st.title("📂 Isis Data Cleaning - Analyseur Expert")
+# --- 1. LOGIQUE DE PERSISTANCE (Simulation LocalStorage) ---
+CACHE_DIR = "cache_nettoyage"
+if not os.path.exists(CACHE_DIR):
+    os.makedirs(CACHE_DIR)
 
-# --- 1. LÉGENDE ---
-st.subheader("Légende des couleurs")
-l1, l2, l3, l4 = st.columns(4)
-l1.info("🔵 **Bleu** : Original interne")
-l2.error("🔴 **Rouge** : Doublon d'adresse")
-l3.warning("🟠 **Orange** : Nom similaire")
-l4.success("🟢 **Vert** : Présent dans l'Annuaire")
+def get_cache_path(filename):
+    """Crée un chemin de fichier unique pour le cache"""
+    return os.path.join(CACHE_DIR, f"cache_{filename}.pkl")
 
-# --- 2. RÉFÉRENTIEL LOCAL ---
-REF_FILE = "annuaire_comparaison.csv"
+def save_to_disk():
+    """Sauvegarde le DataFrame actuel sur le disque"""
+    if "current_file" in st.session_state and "df_processed" in st.session_state:
+        path = get_cache_path(st.session_state.current_file)
+        with open(path, "wb") as f:
+            pickle.dump(st.session_state.df_processed, f)
 
-@st.cache_data
-def load_reference_data(file_path):
-    if os.path.exists(file_path):
-        df_ref = pd.read_csv(file_path, low_memory=False)
-        num_v = df_ref["numeroVoieEtablissement"].fillna("").astype(str).str.replace(r'\.0$', '', regex=True)
-        typ_v = df_ref["typeVoieEtablissement"].fillna("").astype(str)
-        lib_v = df_ref["libelleVoieEtablissement"].fillna("").astype(str)
-        df_ref["addr_ref"] = (num_v + " " + typ_v + " " + lib_v).str.strip().str.upper().str.replace(r'\s+', ' ', regex=True)
-        df_ref["nom_ref"] = df_ref["denominationUsuelleEtablissement"].astype(str).str.strip().str.upper()
-        df_ref["siren_str"] = df_ref["siren"].astype(str).str.zfill(9) 
-        return df_ref
+def load_from_disk(filename):
+    """Charge le cache si il existe"""
+    path = get_cache_path(filename)
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            return pickle.load(f)
     return None
 
-df_ref = load_reference_data(REF_FILE)
+# --- 2. CALLBACKS ---
+def handle_editor_change():
+    if "main_editor" in st.session_state:
+        changes = st.session_state["main_editor"]["edited_rows"]
+        for row_idx_str, updated_values in changes.items():
+            row_idx = int(row_idx_str)
+            actual_index = st.session_state.df_processed.index[row_idx]
+            if "Traité" in updated_values:
+                st.session_state.df_processed.at[actual_index, "Traité"] = updated_values["Traité"]
+        # Sauvegarde automatique sur le disque après chaque clic
+        save_to_disk()
 
-# --- 3. TRAITEMENT ---
-uploaded_isis = st.file_uploader("Charger le fichier ISIS (CSV)", type=["csv"])
+def reset_state():
+    # Optionnel : décommenter pour supprimer le cache au changement de fichier
+    # if "current_file" in st.session_state:
+    #    path = get_cache_path(st.session_state.current_file)
+    #    if os.path.exists(path): os.remove(path)
+    if "df_processed" in st.session_state:
+        del st.session_state.df_processed
 
-if uploaded_isis is not None and df_ref is not None:
-    file_name_no_ext = uploaded_isis.name.rsplit('.', 1)[0]
-    
-    try:
-        df_isis = pd.read_csv(uploaded_isis, encoding='WINDOWS-1252', sep=";")
+st.title("📂 Isis Cleaning - Mode Persistant")
+
+# --- 3. LÉGENDE ---
+l1, l2, l3, l4 = st.columns(4)
+l1.info("🔵 **Bleu** : Original")
+l2.error("🔴 **Rouge** : Doublon Adresse")
+l3.warning("🟠 **Orange** : Nom Similaire")
+l4.markdown('<p style="background-color:rgba(255, 20, 147, 0.25); padding:10px; border-radius:5px; border: 1px solid pink;">💗 <b>Rose</b> : Doublon Téléphone</p>', unsafe_allow_html=True)
+
+# --- 4. IMPORT ---
+uploaded_file = st.file_uploader("Charger le fichier ISIS", type=["csv"], on_change=reset_state)
+
+if uploaded_file is not None:
+    filename = uploaded_file.name
+    st.session_state.current_file = filename
+
+    # On vérifie si un cache existe déjà pour ce fichier sur le disque
+    if "df_processed" not in st.session_state:
+        cached_data = load_from_disk(filename)
         
-        if st.button("🚀 Lancer l'analyse complète"):
-            
-            # Préparation
-            df_final = df_isis.drop(columns=['projet']) if 'projet' in df_isis.columns else df_isis.copy()
-            df_final['Nom_Norm'] = df_final['Nom du client'].astype(str).str.strip().str.upper()
-            df_final['Addr_Norm'] = df_final['Adresse'].astype(str).str.strip().str.upper().str.replace(r'\s+', ' ', regex=True)
-            df_final["tel_clean"] = df_final["Téléphone"].astype(str).str.replace(r'\D', '', regex=True)
-            
-            df_final["dupliquer"] = False
-            df_final["nom_ressemblant"] = False
-            df_final["num_dupliquer"] = False
-            df_final["is_first_occurrence"] = False
-            df_final["deja_dans_annuaire"] = False
-            df_final["Group_ID"] = df_final.index
+        if cached_data is not None:
+            st.session_state.df_processed = cached_data
+            st.success(f"✅ Session restaurée pour : {filename}")
+        else:
+            with st.spinner("Analyse initiale..."):
+                df = pd.read_csv(uploaded_file, encoding='WINDOWS-1252', sep=";")
+                df_final = df.drop(columns=['projet']) if 'projet' in df.columns else df.copy()
+                
+                # Nettoyage & Normalisation
+                df_final['Nom_Norm'] = df_final['Nom du client'].astype(str).str.strip().str.upper()
+                df_final['Addr_Norm'] = df_final['Adresse'].astype(str).str.strip().str.upper().str.replace(r'\s+', ' ', regex=True)
+                df_final["tel_clean"] = df_final["Téléphone"].astype(str).str.replace(r'\D', '', regex=True)
+                
+                df_final["dupliquer"], df_final["nom_ressemblant"] = False, False
+                df_final["num_dupliquer"], df_final["is_first"] = False, False
+                df_final["Group_ID"] = df_final.index
+                df_final["Traité"] = False
 
-            # Comparaison Annuaire
-            df_match_nom = df_ref[['nom_ref', 'siren_str', 'etatAdministratifEtablissement']].drop_duplicates('nom_ref')
-            df_final = pd.merge(df_final, df_match_nom, left_on="Nom_Norm", right_on="nom_ref", how="left")
-            df_match_addr = df_ref[['addr_ref', 'siren_str', 'etatAdministratifEtablissement']].drop_duplicates('addr_ref')
-            df_final = pd.merge(df_final, df_match_addr, left_on="Addr_Norm", right_on="addr_ref", how="left", suffixes=('', '_addr'))
-            
-            df_final["siren_final"] = df_final["siren_str"].fillna(df_final["siren_str_addr"])
-            df_final["etat_final"] = df_final["etatAdministratifEtablissement"].fillna(df_final["etatAdministratifEtablissement_addr"])
-            df_final["deja_dans_annuaire"] = df_final["siren_final"].notna()
-            df_final["Ouverte"] = (df_final["deja_dans_annuaire"]) & (df_final["etat_final"] == "A")
-            df_final["lien_annuaire"] = np.where(df_final["deja_dans_annuaire"], 
-                "https://annuaire-entreprises.data.gouv.fr/entreprise/" + df_final["siren_final"], "Non dispo")
+                addr_map, tel_map, names_vus = {}, {}, []
+                for idx, row in df_final.iterrows():
+                    t, a, n = row["tel_clean"], row['Addr_Norm'], row['Nom_Norm']
+                    # Logique Tel + Première occurrence
+                    if t not in ["", "nan"]:
+                        if t in tel_map:
+                            df_final.at[idx, "num_dupliquer"] = True
+                            df_final.at[idx, "Group_ID"] = tel_map[t]
+                            df_final.at[tel_map[t], "is_first"] = True
+                        else: tel_map[t] = idx
+                    # Logique Adresse + Nom
+                    m_addr = addr_map.get(a)
+                    m_name = None
+                    if n not in ["", "NAN"]:
+                        for i, v in names_vus:
+                            if get_similarity(n, v) >= 0.9: m_name = i; break
+                    if m_addr is not None:
+                        df_final.at[idx, 'dupliquer'], df_final.at[idx, 'Group_ID'] = True, m_addr
+                        df_final.at[m_addr, 'is_first'] = True
+                    elif m_name is not None:
+                        df_final.at[idx, 'nom_ressemblant'], df_final.at[idx, 'Group_ID'] = True, m_name
+                        df_final.at[m_name, 'is_first'] = True
+                    else:
+                        if a not in addr_map: addr_map[a] = idx
+                        if n not in ["", "NAN"]: names_vus.append((idx, n))
 
-            # Doublons Internes
-            addr_to_orig = {}
-            names_vus = [] 
-            for index, row in df_final.iterrows():
-                if row["tel_clean"] not in ["", "nan"]:
-                    df_final.at[index, "num_dupliquer"] = df_final.duplicated(subset=["tel_clean"], keep='first')[index]
+                df_final = df_final.sort_values(by=['Group_ID', 'Nom du client'])
+                st.session_state.df_processed = df_final
+                save_to_disk()
 
-                m_addr = addr_to_orig.get(row['Addr_Norm'])
-                m_name = None
-                if row['Nom_Norm'] not in ["", "NAN"]:
-                    for idx_orig, n_vu in names_vus:
-                        if get_similarity(row['Nom_Norm'], n_vu) >= 0.9:
-                            m_name = idx_orig
-                            break
+    # --- 5. AFFICHAGE ET INTERACTION ---
+    df_ref = st.session_state.df_processed
+    st.divider()
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("Doublons Adresse", df_ref["dupliquer"].sum())
+    s2.metric("Doublons Tel", df_ref["num_dupliquer"].sum())
+    s3.metric("Similitudes Nom", df_ref["nom_ressemblant"].sum())
+    s4.metric("Traitées", df_ref["Traité"].sum())
 
-                if m_addr is not None:
-                    df_final.at[index, 'dupliquer'] = True
-                    df_final.at[index, 'Group_ID'] = m_addr
-                    df_final.at[m_addr, 'is_first_occurrence'] = True
-                elif m_name is not None:
-                    df_final.at[index, 'nom_ressemblant'] = True
-                    df_final.at[index, 'Group_ID'] = m_name
-                    df_final.at[m_name, 'is_first_occurrence'] = True
-                else:
-                    addr_to_orig[row['Addr_Norm']] = index
-                    if row['Nom_Norm'] not in ["", "NAN"]:
-                        names_vus.append((index, row['Nom_Norm']))
+    def apply_style(row):
+        idx = row.name
+        if df_ref.loc[idx, "dupliquer"]: return ['background-color: rgba(255, 0, 0, 0.20)'] * len(row)
+        if df_ref.loc[idx, "num_dupliquer"]: return ['background-color: rgba(255, 20, 147, 0.20)'] * len(row)
+        if df_ref.loc[idx, "nom_ressemblant"]: return ['background-color: rgba(255, 165, 0, 0.25)'] * len(row)
+        if df_ref.loc[idx, "is_first"]: return ['background-color: rgba(0, 100, 255, 0.15)'] * len(row)
+        return [''] * len(row)
 
-            df_final['Original_Order'] = df_final.index
-            df_final = df_final.sort_values(by=['Group_ID', 'Original_Order'])
+    cols_tech = ['Nom_Norm', 'Addr_Norm', 'tel_clean', 'Group_ID', 'is_first']
+    df_to_edit = df_ref.drop(columns=[c for c in cols_tech if c in df_ref.columns])
+    ordered_cols = ["Traité"] + [c for c in df_to_edit.columns if c != "Traité"]
 
-            # --- 4. SECTION STATISTIQUES (RÉTABLIE) ---
-            st.divider()
-            st.subheader("📊 Statistiques de l'Analyse")
-            s1, s2, s3, s4 = st.columns(4)
-            
-            s1.metric("Doublons d'Adresses", f"{df_final['dupliquer'].sum()}", delta_color="inverse")
-            s2.metric("Similitudes de Noms", f"{df_final['nom_ressemblant'].sum()}")
-            s3.metric("Doublons Téléphone", f"{df_final['num_dupliquer'].sum()}")
-            s4.metric("Trouvés dans l'Annuaire", f"{df_final['deja_dans_annuaire'].sum()}", delta="OK")
+    st.data_editor(
+        df_to_edit.style.apply(apply_style, axis=1),
+        column_order=ordered_cols, use_container_width=True, height=600,
+        disabled=[c for c in df_to_edit.columns if c != "Traité"],
+        column_config={"Traité": st.column_config.CheckboxColumn("Traité", default=False)},
+        key="main_editor",
+        on_change=handle_editor_change
+    )
 
-            # Export Excel
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                cols_tech = ['Nom_Norm', 'Addr_Norm', 'tel_clean', 'nom_ref', 'addr_ref', 'siren_str', 
-                             'siren_str_addr', 'etatAdministratifEtablissement', 
-                             'etatAdministratifEtablissement_addr', 'Group_ID', 'Original_Order', 
-                             'is_first_occurrence', 'siren_final', 'etat_final']
-                df_export = df_final.drop(columns=[c for c in cols_tech if c in df_final.columns])
-                df_export.to_excel(writer, index=False, sheet_name='Analyse')
-            
-            st.download_button("📥 Télécharger les résultats", data=buffer.getvalue(), 
-                               file_name=f"{file_name_no_ext}_final.xlsx")
-
-            # Affichage
-            df_display = df_final.copy()
-            for c in ["dupliquer", "nom_ressemblant", "num_dupliquer", "deja_dans_annuaire"]:
-                df_display[c] = df_display[c].astype(str)
-
-            def style_rows(row):
-                idx = row.name
-                if df_final.loc[idx, "deja_dans_annuaire"]:
-                    return ['background-color: rgba(40, 167, 69, 0.15)'] * len(row)
-                if df_final.loc[idx, "dupliquer"]:
-                    return ['background-color: rgba(220, 53, 69, 0.20)'] * len(row)
-                if df_final.loc[idx, "nom_ressemblant"]:
-                    return ['background-color: rgba(255, 193, 7, 0.25)'] * len(row)
-                if df_final.loc[idx, "is_first_occurrence"]:
-                    return ['background-color: rgba(0, 123, 255, 0.15)'] * len(row)
-                return [''] * len(row)
-
-            cols_show = [c for c in df_display.columns if c not in cols_tech]
-            st.dataframe(
-                df_display.style.apply(style_rows, axis=1), 
-                column_order=cols_show,
-                use_container_width=True, height=600,
-                column_config={"lien_annuaire": st.column_config.LinkColumn("Lien Annuaire", display_text="Consulter la fiche")}
-            )
-
-    except Exception as e:
-        st.error(f"Erreur : {e}")
+    if st.button("🗑️ Effacer le cache de ce fichier"):
+        path = get_cache_path(filename)
+        if os.path.exists(path): os.remove(path)
+        reset_state()
+        st.rerun()
