@@ -100,7 +100,7 @@ if uploaded_file is not None:
                 for idx, row in df_final.iterrows():
                     t, a, n = row["tel_clean"], row['Addr_Norm'], row['Nom_Norm']
                     # Logique Tel + Première occurrence
-                    if t and len(t) >= 6:
+                    if isinstance(t, str) and len(t) >= 6:
                         if t in tel_map:
                             df_final.at[idx, "num_dupliquer"] = True
                             df_final.at[idx, "Group_ID"] = tel_map[t]
