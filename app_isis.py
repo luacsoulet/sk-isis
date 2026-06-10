@@ -85,7 +85,11 @@ if uploaded_file is not None:
                 # Nettoyage & Normalisation
                 df_final['Nom_Norm'] = df_final['Nom du client'].astype(str).str.strip().str.upper()
                 df_final['Addr_Norm'] = df_final['Adresse'].astype(str).str.strip().str.upper().str.replace(r'\s+', ' ', regex=True)
-                df_final["tel_clean"] = df_final["Téléphone"].astype(str).str.replace(r'\D', '', regex=True)
+                tel_col = "Téléphone" if "Téléphone" in df_final.columns else "Tél. contact" if "Tél. contact" in df_final.columns else None
+                if tel_col:
+                    df_final["tel_clean"] = df_final[tel_col].astype(str).str.replace(r'\D', '', regex=True)
+                else:
+                    df_final["tel_clean"] = ""
                 
                 df_final["dupliquer"], df_final["nom_ressemblant"] = False, False
                 df_final["num_dupliquer"], df_final["is_first"] = False, False
@@ -96,14 +100,15 @@ if uploaded_file is not None:
                 for idx, row in df_final.iterrows():
                     t, a, n = row["tel_clean"], row['Addr_Norm'], row['Nom_Norm']
                     # Logique Tel + Première occurrence
-                    if t not in ["", "nan"]:
+                    if t and len(t) >= 6:
                         if t in tel_map:
                             df_final.at[idx, "num_dupliquer"] = True
                             df_final.at[idx, "Group_ID"] = tel_map[t]
                             df_final.at[tel_map[t], "is_first"] = True
                         else: tel_map[t] = idx
                     # Logique Adresse + Nom
-                    m_addr = addr_map.get(a)
+                    addr_valid = a not in ["", "NAN", "NONE"]
+                    m_addr = addr_map.get(a) if addr_valid else None
                     m_name = None
                     if n not in ["", "NAN"]:
                         for i, v in names_vus:
@@ -115,7 +120,7 @@ if uploaded_file is not None:
                         df_final.at[idx, 'nom_ressemblant'], df_final.at[idx, 'Group_ID'] = True, m_name
                         df_final.at[m_name, 'is_first'] = True
                     else:
-                        if a not in addr_map: addr_map[a] = idx
+                        if addr_valid and a not in addr_map: addr_map[a] = idx
                         if n not in ["", "NAN"]: names_vus.append((idx, n))
 
                 df_final = df_final.sort_values(by=['Group_ID', 'Nom du client'])
