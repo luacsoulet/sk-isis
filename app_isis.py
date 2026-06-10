@@ -103,7 +103,8 @@ if uploaded_file is not None:
                             df_final.at[tel_map[t], "is_first"] = True
                         else: tel_map[t] = idx
                     # Logique Adresse + Nom
-                    m_addr = addr_map.get(a)
+                    addr_valid = a not in ["", "NAN", "NONE"]
+                    m_addr = addr_map.get(a) if addr_valid else None
                     m_name = None
                     if n not in ["", "NAN"]:
                         for i, v in names_vus:
@@ -115,7 +116,7 @@ if uploaded_file is not None:
                         df_final.at[idx, 'nom_ressemblant'], df_final.at[idx, 'Group_ID'] = True, m_name
                         df_final.at[m_name, 'is_first'] = True
                     else:
-                        if a not in addr_map: addr_map[a] = idx
+                        if addr_valid and a not in addr_map: addr_map[a] = idx
                         if n not in ["", "NAN"]: names_vus.append((idx, n))
 
                 df_final = df_final.sort_values(by=['Group_ID', 'Nom du client'])
